@@ -22,7 +22,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Copy only dependency files first for better caching
 # pyproject.toml is in the project root
-COPY pyproject.toml ./
+COPY pyproject.toml README.md ./
+
+# Copy backend source for package installation
+COPY backend/ ./backend/
 
 # Install dependencies (production only, no dev dependencies)
 RUN pip install --no-cache-dir .
@@ -56,13 +59,13 @@ RUN mkdir -p /app/storage && \
 # Switch to non-root user
 USER appuser
 
-# Expose port 8080 (configurable via SERVER_PORT env var)
-EXPOSE 8080
+# Expose port 8765 (configurable via SERVER_PORT env var)
+EXPOSE 8765
 
 # Health check endpoint
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')" || exit 1
 
 # Run with uvicorn
 # Port can be overridden via environment variable in docker-compose
-CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8765"]
