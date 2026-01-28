@@ -41,6 +41,7 @@ from backend.models import OutputFileType, TaskStatus
 from backend.services.file_storage import FileStorage
 from backend.services.file_validator import validate_batch, ValidationResult
 from backend.services.task_manager import TaskManager
+from backend.services.mineru_client import MineruClient
 from backend.api.websocket import websocket_manager
 
 
@@ -92,10 +93,14 @@ async def lifespan(app: FastAPI):
     # Initialize file storage
     _file_storage = FileStorage(settings.STORAGE_PATH)
     
+    # Initialize MinerU client
+    mineru_client = MineruClient(api_token=settings.MINERU_API_TOKEN)
+    
     # Initialize task manager
     _task_manager = TaskManager(
         redis_client=_redis_client,
         file_storage=_file_storage,
+        mineru_client=mineru_client,
     )
     
     logger.info("Application started")
