@@ -36,7 +36,7 @@ STORAGE_PATH=/app/storage
 ### 2. Docker 部署（推荐）
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 服务启动后访问 http://localhost:8765
