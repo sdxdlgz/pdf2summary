@@ -273,20 +273,80 @@ class TaskManager:
             if extracted_docx_path is not None:
                 extracted_docx_bytes = Path(extracted_docx_path).read_bytes()
 
-            # Generate and save output files (MinerU outputs only)
-            await self.update_progress(
-                task_id=task_id,
-                stage=TaskStage.GENERATING,
-                progress=0,
-                total=2,
-                message="Saving MinerU output files",
-            )
+            translated_markdown: str | None = None
+            summary_markdown: str | None = None
+
+            if self.ai_client is not None:
+                source_lang = await self.ai_client.detect_language(original_markdown)
+
+                await self.update_progress(
+                    task_id=task_id,
+                    stage=TaskStage.TRANSLATING,
+                    progress=0,
+                    total=1,
+                    message="Translating Markdown",
+                )
+                translated_markdown = await self.ai_client.translate_chunk(
+                    original_markdown,
+                    source_lang,
+                    "zh",
+                )
+                await self.update_progress(
+                    task_id=task_id,
+                    stage=TaskStage.TRANSLATING,
+                    progress=1,
+                    total=1,
+                    message="Translation complete",
+                )
+
+                await self.update_progress(
+                    task_id=task_id,
+                    stage=TaskStage.SUMMARIZING,
+                    progress=0,
+                    total=1,
+                    message="Generating summary",
+                )
+                summary_markdown = await self.ai_client.summarize_markdown(
+                    original_markdown,
+                    source_lang,
+                    target_lang="zh",
+                )
+                await self.update_progress(
+                    task_id=task_id,
+                    stage=TaskStage.SUMMARIZING,
+                    progress=1,
+                    total=1,
+                    message="Summary complete",
+                )
 
             output_basename = self._get_output_basename(task_id, task_status)
             outputs: dict[str, str] = {}
 
             original_md_filename = f"{output_basename}.md"
             original_docx_filename = f"{output_basename}.docx"
+            translated_md_filename = f"{output_basename}_zh.md"
+            translated_docx_filename = f"{output_basename}_zh.docx"
+            summary_filename = f"{output_basename}_summary.md"
+
+            total_outputs = 1  # original_md
+            if extracted_docx_bytes is not None or self.document_processor is not None:
+                total_outputs += 1  # original_docx
+            if translated_markdown is not None:
+                total_outputs += 1  # translated_md
+                if self.document_processor is not None:
+                    total_outputs += 1  # translated_docx
+            if summary_markdown is not None:
+                total_outputs += 1  # summary
+
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=0,
+                total=total_outputs,
+                message="Saving output files",
+            )
+
+            saved_outputs = 0
 
             outputs[OutputFileType.ORIGINAL_MD.value] = self.file_storage.save_output(
                 task_id,
@@ -294,36 +354,86 @@ class TaskManager:
                 original_md_filename,
                 original_markdown.encode("utf-8"),
             )
+            saved_outputs += 1
             await self.update_progress(
                 task_id=task_id,
                 stage=TaskStage.GENERATING,
-                progress=1,
-                total=2,
-                message="Saved MinerU Markdown",
+                progress=saved_outputs,
+                total=total_outputs,
+                message="Saved original Markdown",
             )
 
-            if extracted_docx_bytes is not None:
+            original_docx_to_save: bytes | None = extracted_docx_bytes
+            if original_docx_to_save is None and self.document_processor is not None:
+                original_docx_to_save = await self.document_processor.markdown_to_docx(
+                    original_markdown
+                )
+
+            if original_docx_to_save is not None:
                 outputs[OutputFileType.ORIGINAL_DOCX.value] = self.file_storage.save_output(
                     task_id,
                     OutputFileType.ORIGINAL_DOCX.value,
                     original_docx_filename,
-                    extracted_docx_bytes,
+                    original_docx_to_save,
                 )
+                saved_outputs += 1
                 await self.update_progress(
                     task_id=task_id,
                     stage=TaskStage.GENERATING,
-                    progress=2,
-                    total=2,
-                    message="Saved MinerU DOCX",
+                    progress=saved_outputs,
+                    total=total_outputs,
+                    message="Saved original DOCX",
                 )
-            else:
-                logger.warning("Task %s: MinerU DOCX not found; skipping DOCX output", task_id)
+
+            if translated_markdown is not None:
+                outputs[OutputFileType.BILINGUAL_MD.value] = self.file_storage.save_output(
+                    task_id,
+                    OutputFileType.BILINGUAL_MD.value,
+                    translated_md_filename,
+                    translated_markdown.encode("utf-8"),
+                )
+                saved_outputs += 1
                 await self.update_progress(
                     task_id=task_id,
                     stage=TaskStage.GENERATING,
-                    progress=2,
-                    total=2,
-                    message="MinerU DOCX not found; skipped",
+                    progress=saved_outputs,
+                    total=total_outputs,
+                    message="Saved translated Markdown",
+                )
+
+                if self.document_processor is not None:
+                    translated_docx_bytes = await self.document_processor.markdown_to_docx(
+                        translated_markdown
+                    )
+                    outputs[OutputFileType.BILINGUAL_DOCX.value] = self.file_storage.save_output(
+                        task_id,
+                        OutputFileType.BILINGUAL_DOCX.value,
+                        translated_docx_filename,
+                        translated_docx_bytes,
+                    )
+                    saved_outputs += 1
+                    await self.update_progress(
+                        task_id=task_id,
+                        stage=TaskStage.GENERATING,
+                        progress=saved_outputs,
+                        total=total_outputs,
+                        message="Saved translated DOCX",
+                    )
+
+            if summary_markdown is not None:
+                outputs[OutputFileType.SUMMARY.value] = self.file_storage.save_output(
+                    task_id,
+                    OutputFileType.SUMMARY.value,
+                    summary_filename,
+                    summary_markdown.encode("utf-8"),
+                )
+                saved_outputs += 1
+                await self.update_progress(
+                    task_id=task_id,
+                    stage=TaskStage.GENERATING,
+                    progress=saved_outputs,
+                    total=total_outputs,
+                    message="Saved summary",
                 )
 
             await self._update_task_outputs(task_id, outputs)

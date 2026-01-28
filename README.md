@@ -1,10 +1,12 @@
 # Research Report Processor
 
-一个用于处理 PDF 研究报告的 Web 应用，基于 MinerU 解析并导出 Markdown / DOCX。
+一个用于处理 PDF 研究报告的 Web 应用：MinerU 解析 +（可选）AI 翻译/总结。
 
 ## 功能特性
 
 - PDF 文档上传与解析（基于 MinerU API）
+- （可选）将解析后的 Markdown 整篇翻译为中文
+- （可选）基于解析后的 Markdown 生成中文总结
 - 实时处理进度展示（WebSocket）
 - 多种格式输出下载（Markdown、DOCX）
 
@@ -26,6 +28,8 @@ cp .env.example .env
 
 ```env
 MINERU_API_TOKEN=your_mineru_token
+AI_API_ENDPOINT=https://api.openai.com/v1
+AI_API_KEY=your_api_key
 STORAGE_PATH=/app/storage
 ```
 
@@ -75,6 +79,8 @@ npm run dev
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | MINERU_API_TOKEN | ✓ | - | MinerU API Token |
+| AI_API_ENDPOINT | | - | AI 服务端点（开启翻译/总结） |
+| AI_API_KEY | | - | AI 服务密钥（开启翻译/总结） |
 | STORAGE_PATH | ✓ | - | 文件存储路径 |
 | SERVER_PORT | | 8765 | 后端服务端口 |
 | FRONTEND_PORT | | 8765 | 前端服务端口 |

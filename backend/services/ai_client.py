@@ -639,6 +639,51 @@ class AIClient:
         )
         
         return bilingual_content
+
+    async def summarize_markdown(
+        self,
+        content: str,
+        source_lang: str,
+        target_lang: str = "zh",
+    ) -> str:
+        """
+        Summarize a full Markdown document into the target language.
+
+        Unlike `summarize()`, this method performs a single request and returns a
+        single-language summary (default: Chinese). It is intended for providers
+        that are sensitive to high request counts.
+        """
+        if not content or not content.strip():
+            return ""
+
+        lang_names = {
+            "en": "English",
+            "ja": "Japanese",
+            "zh": "Chinese",
+        }
+        source_name = lang_names.get(source_lang, source_lang)
+        target_name = lang_names.get(target_lang, target_lang)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a professional research analyst. "
+                    f"Summarize the following research report written in {source_name} into {target_name}. "
+                    "Preserve important numbers and named entities. "
+                    "Use Markdown with clear headings and bullet points. "
+                    "Only output the summary, no explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": content,
+            },
+        ]
+
+        logger.info("Generating %s summary for document (%d chars)", target_lang, len(content))
+        summary = await self._call_api_with_retry(messages)
+        return summary.strip()
     
     async def summarize(
         self,

@@ -43,11 +43,16 @@ services:
     environment:
       # Required environment variables (Requirement 10.3)
       - MINERU_API_TOKEN=${MINERU_API_TOKEN}
+      # Optional AI configuration (enable translation/summarization when set)
+      - AI_API_ENDPOINT=${AI_API_ENDPOINT}
+      - AI_API_KEY=${AI_API_KEY}
       - STORAGE_PATH=/app/storage
       - SERVER_PORT=8765
       - REDIS_URL=redis://redis:6379/0
       # Optional environment variables
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - AI_MODEL=${AI_MODEL:-gpt-5-nano}
+      - AI_MAX_CONCURRENCY=${AI_MAX_CONCURRENCY:-10}
       - DOWNLOAD_LINK_EXPIRY=${DOWNLOAD_LINK_EXPIRY:-86400}
     volumes:
       # Persistent storage for uploaded files and outputs (Requirement 10.5)

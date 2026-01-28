@@ -14,7 +14,7 @@ Requirements:
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field, ValidationError, field_validator
+from pydantic import Field, ValidationError, ValidationInfo, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -106,7 +106,7 @@ class Settings(BaseSettings):
         mode="before",
     )
     @classmethod
-    def normalize_string_env_vars(cls, v: object) -> object:
+    def normalize_string_env_vars(cls, v: object, info: ValidationInfo) -> object:
         """
         Normalize string environment variables.
 
@@ -121,6 +121,9 @@ class Settings(BaseSettings):
             value.startswith("'") and value.endswith("'")
         ):
             value = value[1:-1].strip()
+
+        if value == "" and info.field_name in {"AI_API_ENDPOINT", "AI_API_KEY"}:
+            return None
         return value
     
     @field_validator("LOG_LEVEL")
