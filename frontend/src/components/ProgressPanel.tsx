@@ -75,6 +75,8 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef<number>(0);
+  const terminalStageRef = useRef<boolean>(false);
+  const lastErrorRef = useRef<string | null>(null);
   const maxReconnectAttempts = 5;
 
   // Clean up WebSocket connection
@@ -119,13 +121,21 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
           
           // Handle completion
           if (data.stage === 'completed') {
+            terminalStageRef.current = true;
             onComplete();
+            cleanupWebSocket();
           }
           
           // Handle failure
           if (data.stage === 'failed') {
-            setErrorMessage(data.message || '处理失败');
-            onError(data.message || '处理失败');
+            terminalStageRef.current = true;
+            const msg = data.message || '处理失败';
+            setErrorMessage(msg);
+            if (lastErrorRef.current !== msg) {
+              lastErrorRef.current = msg;
+              onError(msg);
+            }
+            cleanupWebSocket();
           }
         } catch (e) {
           console.error('Failed to parse WebSocket message:', e);
@@ -142,7 +152,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
         setConnectionStatus('disconnected');
         
         // Attempt to reconnect if not a normal close and task is still active
-        if (event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
+        if (!terminalStageRef.current && event.code !== 1000 && reconnectAttemptsRef.current < maxReconnectAttempts) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
           reconnectAttemptsRef.current += 1;
           
@@ -169,6 +179,8 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
       setProgress(null);
       setErrorMessage(null);
       reconnectAttemptsRef.current = 0;
+      terminalStageRef.current = false;
+      lastErrorRef.current = null;
       
       connectWebSocket(taskId);
     } else {

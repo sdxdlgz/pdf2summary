@@ -101,6 +101,31 @@ class Settings(BaseSettings):
         description="Download link expiration time in seconds (default: 24 hours)",
         ge=60,
     )
+
+    @field_validator(
+        "MINERU_API_TOKEN",
+        "AI_API_ENDPOINT",
+        "AI_API_KEY",
+        "STORAGE_PATH",
+        mode="before",
+    )
+    @classmethod
+    def normalize_string_env_vars(cls, v: object) -> object:
+        """
+        Normalize string environment variables.
+
+        - Strip surrounding whitespace/newlines
+        - Strip a single pair of surrounding quotes (common in .env files)
+        """
+        if not isinstance(v, str):
+            return v
+
+        value = v.strip()
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
+            value = value[1:-1].strip()
+        return value
     
     @field_validator("LOG_LEVEL")
     @classmethod

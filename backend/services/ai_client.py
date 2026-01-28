@@ -59,6 +59,8 @@ class AIClientError(Exception):
         message: Human-readable error description
         retry_count: Number of retries attempted before failure
         original_error: The underlying error that caused the failure
+        status_code: HTTP status code if available
+        retryable: Whether the error should be retried
     """
     
     def __init__(
@@ -66,10 +68,14 @@ class AIClientError(Exception):
         message: str,
         retry_count: int = 0,
         original_error: Optional[Exception] = None,
+        status_code: Optional[int] = None,
+        retryable: bool = True,
     ):
         self.message = message
         self.retry_count = retry_count
         self.original_error = original_error
+        self.status_code = status_code
+        self.retryable = retryable
         super().__init__(self.message)
 
 
@@ -301,17 +307,37 @@ class AIClient:
                         json=payload,
                         headers=self._get_headers(),
                     ) as response:
-                        if response.status == 429:
-                            raise AIClientError(
-                                message="Rate limit exceeded",
-                                retry_count=0,
-                            )
-                        
                         if response.status >= 400:
                             error_text = await response.text()
+
+                            if response.status == 429:
+                                raise AIClientError(
+                                    message="Rate limit exceeded",
+                                    retry_count=0,
+                                    status_code=response.status,
+                                    retryable=True,
+                                )
+
+                            # Most 4xx errors are non-retryable (bad request, auth, etc.)
+                            retryable = response.status >= 500
+
+                            if response.status in (401, 403):
+                                raise AIClientError(
+                                    message=(
+                                        f"AI API authentication failed (HTTP {response.status}). "
+                                        "Check AI_API_ENDPOINT, AI_API_KEY, and AI_MODEL. "
+                                        f"Provider response: {error_text}"
+                                    ),
+                                    retry_count=0,
+                                    status_code=response.status,
+                                    retryable=False,
+                                )
+
                             raise AIClientError(
                                 message=f"API error {response.status}: {error_text}",
                                 retry_count=0,
+                                status_code=response.status,
+                                retryable=retryable,
                             )
                         
                         response_data = await response.json()
@@ -322,6 +348,7 @@ class AIClient:
                             raise AIClientError(
                                 message="No choices in API response",
                                 retry_count=0,
+                                retryable=False,
                             )
                         
                         content = choices[0].get("message", {}).get("content", "")
@@ -332,12 +359,14 @@ class AIClient:
                     message=f"Network error: {e}",
                     retry_count=0,
                     original_error=e,
+                    retryable=True,
                 ) from e
             except asyncio.TimeoutError as e:
                 raise AIClientError(
                     message="Request timeout",
                     retry_count=0,
                     original_error=e,
+                    retryable=True,
                 ) from e
     
     async def _call_api_with_retry(
@@ -370,6 +399,10 @@ class AIClient:
             
             except AIClientError as e:
                 last_error = e
+
+                if not e.retryable:
+                    logger.error("Non-retryable AI API error: %s", e.message)
+                    raise
                 
                 if attempt < MAX_RETRIES:
                     # Calculate backoff delay
@@ -396,6 +429,8 @@ class AIClient:
             message=f"Failed after {MAX_RETRIES + 1} attempts: {last_error.message if last_error else 'Unknown error'}",
             retry_count=MAX_RETRIES,
             original_error=last_error,
+            status_code=last_error.status_code if last_error else None,
+            retryable=last_error.retryable if last_error else True,
         )
     
     async def detect_language(self, text: str) -> str:
@@ -523,48 +558,43 @@ class AIClient:
             source_lang,
         )
         
-        # Create translation tasks for concurrent processing (Requirement 5.4)
-        async def translate_with_progress(chunk: str, index: int) -> tuple[int, str]:
-            """Translate a chunk and track progress."""
+        translated_chunks: list[Optional[str]] = [None] * total_chunks
+
+        # Fail fast: if one chunk hits a non-retryable error (e.g., auth/model),
+        # cancel remaining chunks to avoid spamming the provider.
+        async def translate_with_progress(chunk: str, index: int) -> None:
             nonlocal completed_chunks
-            
+
             translated = await self.translate_chunk(chunk, source_lang, "zh")
-            
+            translated_chunks[index] = translated
+
             completed_chunks += 1
             if progress_callback:
                 progress_callback(completed_chunks, total_chunks)
-            
-            return index, translated
-        
-        # Create tasks for all chunks
-        tasks = [
-            translate_with_progress(chunk, i)
-            for i, chunk in enumerate(chunks)
-        ]
-        
-        # Execute concurrently with semaphore limiting (Requirement 5.4)
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # Process results and handle any errors
-        translated_chunks: list[Optional[str]] = [None] * total_chunks
-        errors: list[str] = []
-        
-        for result in results:
-            if isinstance(result, Exception):
-                errors.append(str(result))
-            else:
-                index, translated = result
-                translated_chunks[index] = translated
-        
-        if errors:
-            logger.error(
-                "Translation errors: %s",
-                "; ".join(errors[:3]),  # Log first 3 errors
-            )
+
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for i, chunk in enumerate(chunks):
+                    tg.create_task(translate_with_progress(chunk, i))
+        except* AIClientError as eg:
+            first = eg.exceptions[0] if eg.exceptions else AIClientError("Unknown AI error")
+            logger.error("Document translation failed: %s", getattr(first, "message", str(first)))
             raise AIClientError(
-                message=f"Translation failed for {len(errors)} chunks",
-                retry_count=MAX_RETRIES,
-            )
+                message=getattr(first, "message", str(first)),
+                retry_count=getattr(first, "retry_count", 0),
+                original_error=first,
+                status_code=getattr(first, "status_code", None),
+                retryable=getattr(first, "retryable", False),
+            ) from first
+        except* Exception as eg:
+            first = eg.exceptions[0] if eg.exceptions else Exception("Unknown error")
+            logger.error("Document translation failed: %s", first)
+            raise AIClientError(
+                message=str(first),
+                retry_count=0,
+                original_error=first,
+                retryable=False,
+            ) from first
         
         # Ensure all chunks were translated
         final_translated = [t if t is not None else "" for t in translated_chunks]
