@@ -289,21 +289,25 @@ class MineruClient:
         if not file_content:
             raise MineruClientError("file_content is required")
         
-        logger.debug("Uploading file to pre-signed URL")
+        logger.debug("Uploading file to pre-signed URL: %s", upload_url[:100])
         
         try:
             async with aiohttp.ClientSession() as session:
                 # Requirement 2.2: Use HTTP PUT
-                # Requirement 2.3: Send raw binary, no Content-Type header
+                # Requirement 2.3: Send raw binary, explicitly skip Content-Type
+                # Use skip_auto_headers to prevent aiohttp from adding headers
                 async with session.put(
                     upload_url,
                     data=file_content,
-                    # Do not set Content-Type header (Requirement 2.3)
+                    skip_auto_headers=['Content-Type'],
                 ) as response:
+                    response_text = await response.text()
+                    
                     if response.status >= 400:
                         error_msg = (
-                            f"Upload failed with status {response.status}"
+                            f"Upload failed with status {response.status}: {response_text[:200]}"
                         )
+                        logger.error(error_msg)
                         self._notify_error(None, error_msg)
                         raise MineruClientError(message=error_msg)
                     
