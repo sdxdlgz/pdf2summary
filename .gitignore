@@ -74,3 +74,6 @@ Thumbs.db
 *.temp
 tmp/
 temp/
+
+# Project specific
+mineru.txt
