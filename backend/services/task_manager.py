@@ -238,15 +238,18 @@ class TaskManager:
             attempt += 1
 
     async def process_task(self, task_id: str) -> None:
+        logger.info("Task %s: processing started", task_id)
         try:
             task_status = await self.get_task_status(task_id)
             if task_status is None:
                 raise TaskManagerError(message=f"Task {task_id} not found", task_id=task_id)
             await self.update_progress(task_id=task_id, stage=TaskStage.UPLOADING, progress=0, total=len(task_status.files), message="Uploading files")
             batch_id = await self._upload_files_to_mineru(task_id, task_status)
+            logger.info("Task %s: uploaded to MinerU (batch_id=%s)", task_id, batch_id)
             await self.update_progress(task_id=task_id, stage=TaskStage.UPLOADING, progress=len(task_status.files), total=len(task_status.files), message="Files uploaded")
             await self.update_progress(task_id=task_id, stage=TaskStage.PARSING, progress=0, total=100, message="Waiting for MinerU")
             batch_result = await self.poll_mineru_status(task_id, batch_id)
+            logger.info("Task %s: MinerU parsing finished", task_id)
             await self.update_progress(task_id=task_id, stage=TaskStage.DOWNLOADING, progress=0, total=len(batch_result.extract_result), message="Downloading results")
             await self._download_results(task_id, batch_result)
             await self.update_progress(task_id=task_id, stage=TaskStage.DOWNLOADING, progress=len(batch_result.extract_result), total=len(batch_result.extract_result), message="Results downloaded")
@@ -257,10 +260,12 @@ class TaskManager:
             await self.update_progress(task_id=task_id, stage=TaskStage.GENERATING, progress=0, total=100, message="Generating output files")
             await self.update_progress(task_id=task_id, stage=TaskStage.GENERATING, progress=100, total=100, message="Output files generated")
             await self.update_progress(task_id=task_id, stage=TaskStage.COMPLETED, progress=100, total=100, message="Processing complete")
+            logger.info("Task %s: processing completed", task_id)
         except TaskManagerError:
             raise
         except Exception as e:
             error_msg = str(e)
+            logger.exception("Task %s: processing failed: %s", task_id, error_msg)
             await self._broadcast_error(task_id, error_msg)
             raise TaskManagerError(message=f"Task processing failed: {error_msg}", task_id=task_id) from e
 

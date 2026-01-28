@@ -9,7 +9,7 @@ Requirements:
 - 11.2: Read AI service endpoint from AI_API_ENDPOINT
 - 11.3: Read AI service API key from AI_API_KEY
 - 11.4: Read file storage path from STORAGE_PATH
-- 11.5: Read server port from SERVER_PORT with default 8080
+- 11.5: Read server port from SERVER_PORT with default 8765
 - 11.6: Fail to start with descriptive error if required variable is missing
 """
 
@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     - STORAGE_PATH: Path for file storage
     
     Optional variables (have defaults):
-    - SERVER_PORT: HTTP server port (default: 8080)
+    - SERVER_PORT: HTTP server port (default: 8765)
     - REDIS_URL: Redis connection URL
     - LOG_LEVEL: Logging level
     - AI_MODEL: AI model name

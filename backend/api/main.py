@@ -16,8 +16,9 @@ Requirements:
 """
 
 import asyncio
+import json
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated
 
@@ -40,7 +41,7 @@ from backend.config import Settings, get_cached_settings
 from backend.models import OutputFileType, TaskStatus
 from backend.services.file_storage import FileStorage
 from backend.services.file_validator import validate_batch, ValidationResult
-from backend.services.task_manager import TaskManager
+from backend.services.task_manager import PROGRESS_CHANNEL_PREFIX, TASK_KEY_PREFIX, TaskManager
 from backend.services.mineru_client import MineruClient
 from backend.api.websocket import websocket_manager
 
@@ -429,21 +430,114 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
         - 8.7: Broadcast error messages via WebSocket
     """
     await websocket_manager.connect(task_id, websocket)
-    try:
-        # Keep the connection alive and handle incoming messages
-        while True:
-            # Wait for any message from client (ping/pong or close)
-            # This keeps the connection alive
-            try:
+
+    if _redis_client is None:
+        logger.warning("Redis client not initialized; WebSocket progress disabled")
+        try:
+            while True:
                 data = await websocket.receive_text()
-                # Client can send "ping" to keep connection alive
                 if data == "ping":
                     await websocket.send_text("pong")
-            except WebSocketDisconnect:
-                break
+        except WebSocketDisconnect:
+            return
+        finally:
+            await websocket_manager.disconnect(task_id, websocket)
+
+    channel = f"{PROGRESS_CHANNEL_PREFIX}{task_id}"
+    task_key = f"{TASK_KEY_PREFIX}{task_id}"
+    pubsub = _redis_client.pubsub()
+
+    receive_task: asyncio.Task[str] | None = None
+    pubsub_task: asyncio.Task[dict | None] | None = None
+
+    try:
+        # Send the most recent known progress (if any) so clients don't miss early updates.
+        try:
+            task_data = await _redis_client.get(task_key)
+            if task_data:
+                task_status = TaskStatus.model_validate_json(task_data)
+                await websocket.send_json(task_status.progress.model_dump(mode="json"))
+        except Exception as e:
+            logger.debug("Failed to send initial progress for task %s: %s", task_id, e)
+
+        await pubsub.subscribe(channel)
+
+        receive_task = asyncio.create_task(websocket.receive_text())
+        pubsub_task = asyncio.create_task(
+            pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+        )
+
+        while True:
+            done, _pending = await asyncio.wait(
+                {receive_task, pubsub_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if receive_task in done:
+                try:
+                    data = receive_task.result()
+                except WebSocketDisconnect:
+                    break
+
+                if data == "ping":
+                    await websocket.send_text("pong")
+
+                receive_task = asyncio.create_task(websocket.receive_text())
+
+            if pubsub_task in done:
+                try:
+                    message = pubsub_task.result()
+                except Exception as e:
+                    logger.warning("Redis pubsub error for task %s: %s", task_id, e)
+                    break
+                finally:
+                    pubsub_task = asyncio.create_task(
+                        pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                    )
+
+                if not message:
+                    continue
+
+                payload = message.get("data")
+                if payload is None:
+                    continue
+
+                if isinstance(payload, bytes):
+                    text = payload.decode("utf-8", errors="replace")
+                else:
+                    text = str(payload)
+
+                try:
+                    await websocket.send_text(text)
+                except WebSocketDisconnect:
+                    break
+
+                # Auto-close after terminal updates to avoid leaking idle connections.
+                try:
+                    stage = json.loads(text).get("stage")
+                    if stage in ("completed", "failed"):
+                        await websocket.close(code=1000)
+                        break
+                except Exception:
+                    pass
+
     except Exception as e:
         logger.warning("WebSocket error for task %s: %s", task_id, e)
     finally:
+        if receive_task is not None:
+            receive_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await receive_task
+        if pubsub_task is not None:
+            pubsub_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await pubsub_task
+
+        with suppress(Exception):
+            await pubsub.unsubscribe(channel)
+        with suppress(Exception):
+            await pubsub.close()
+
         await websocket_manager.disconnect(task_id, websocket)
 
 

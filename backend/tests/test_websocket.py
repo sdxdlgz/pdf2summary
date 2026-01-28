@@ -358,6 +358,86 @@ class TestWebSocketEndpoint:
                     response = websocket.receive_text()
                     assert response == "pong"
 
+    def test_websocket_forwards_redis_progress(self, test_app, monkeypatch):
+        """Test that WebSocket forwards progress updates published to Redis."""
+        import backend.api.main as main_module
+        from backend.models import FileInfo, ProgressUpdate, TaskStage, TaskStatus
+
+        task_id = "task-redis-123"
+
+        initial_progress = ProgressUpdate(
+            task_id=task_id,
+            stage=TaskStage.UPLOADING,
+            progress=0,
+            total=1,
+            percentage=0.0,
+            message="Task created",
+        )
+        initial_status = TaskStatus(
+            task_id=task_id,
+            stage=TaskStage.UPLOADING,
+            files=[FileInfo(name="example.pdf", data_id="data-1", size=123)],
+            progress=initial_progress,
+        )
+
+        completed_progress = ProgressUpdate(
+            task_id=task_id,
+            stage=TaskStage.COMPLETED,
+            progress=100,
+            total=100,
+            percentage=100.0,
+            message="Processing complete",
+        )
+
+        class FakePubSub:
+            def __init__(self, messages: list[dict]):
+                self._messages = list(messages)
+
+            async def subscribe(self, _channel: str) -> None:
+                return None
+
+            async def unsubscribe(self, _channel: str) -> None:
+                return None
+
+            async def close(self) -> None:
+                return None
+
+            async def get_message(self, *args, **kwargs):  # noqa: ANN001,ANN002
+                if self._messages:
+                    return self._messages.pop(0)
+                return None
+
+        class FakeRedis:
+            def __init__(self, task_data: bytes, pubsub: FakePubSub):
+                self._task_data = task_data
+                self._pubsub = pubsub
+
+            async def get(self, _key: str) -> bytes:
+                return self._task_data
+
+            def pubsub(self) -> FakePubSub:
+                return self._pubsub
+
+        pubsub = FakePubSub(
+            messages=[
+                {"data": completed_progress.model_dump_json().encode("utf-8")},
+            ]
+        )
+        fake_redis = FakeRedis(
+            task_data=initial_status.model_dump_json().encode("utf-8"),
+            pubsub=pubsub,
+        )
+
+        monkeypatch.setattr(main_module, "_redis_client", fake_redis)
+
+        with TestClient(test_app) as client:
+            with client.websocket_connect(f"/ws/{task_id}") as websocket:
+                first = websocket.receive_json()
+                assert first["stage"] == "uploading"
+
+                second = websocket.receive_json()
+                assert second["stage"] == "completed"
+
 
 class TestGlobalWebSocketManager:
     """Tests for the global websocket_manager instance."""

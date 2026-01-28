@@ -42,7 +42,7 @@ class TestSettings:
             assert settings.STORAGE_PATH == "/tmp/storage"
     
     def test_settings_default_server_port(self):
-        """Test that SERVER_PORT defaults to 8080 (Requirement 11.5)."""
+        """Test that SERVER_PORT defaults to 8765."""
         env_vars = {
             "MINERU_API_TOKEN": "test_token",
             "AI_API_ENDPOINT": "https://api.example.com",
@@ -52,7 +52,7 @@ class TestSettings:
         
         with patch.dict(os.environ, env_vars, clear=True):
             settings = Settings()
-            assert settings.SERVER_PORT == 8080
+            assert settings.SERVER_PORT == 8765
     
     def test_settings_custom_server_port(self):
         """Test that SERVER_PORT can be customized."""
