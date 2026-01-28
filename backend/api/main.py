@@ -39,6 +39,8 @@ from redis.asyncio import Redis
 
 from backend.config import Settings, get_cached_settings
 from backend.models import OutputFileType, TaskStatus
+from backend.services.ai_client import AIClient
+from backend.services.document_processor import DocumentProcessor
 from backend.services.file_storage import FileStorage
 from backend.services.file_validator import validate_batch, ValidationResult
 from backend.services.task_manager import PROGRESS_CHANNEL_PREFIX, TASK_KEY_PREFIX, TaskManager
@@ -47,6 +49,29 @@ from backend.api.websocket import websocket_manager
 
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_app_logging(level_name: str) -> None:
+    """Ensure application loggers are visible under uvicorn/docker logs."""
+    level = getattr(logging, level_name.upper(), logging.INFO)
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+
+    # If something already configured root handlers, keep it.
+    if root_logger.handlers:
+        return
+
+    uvicorn_error_logger = logging.getLogger("uvicorn.error")
+    if uvicorn_error_logger.handlers:
+        for handler in uvicorn_error_logger.handlers:
+            root_logger.addHandler(handler)
+        return
+
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
 
 
 # Response models
@@ -87,6 +112,7 @@ async def lifespan(app: FastAPI):
     global _redis_client, _task_manager, _file_storage
     
     settings = get_cached_settings()
+    _configure_app_logging(settings.LOG_LEVEL)
     
     # Initialize Redis client
     _redis_client = Redis.from_url(settings.REDIS_URL)
@@ -96,12 +122,23 @@ async def lifespan(app: FastAPI):
     
     # Initialize MinerU client
     mineru_client = MineruClient(api_token=settings.MINERU_API_TOKEN)
+
+    # Initialize AI + document processor
+    ai_client = AIClient(
+        endpoint=settings.AI_API_ENDPOINT,
+        api_key=settings.AI_API_KEY,
+        model=settings.AI_MODEL,
+        max_concurrency=settings.AI_MAX_CONCURRENCY,
+    )
+    document_processor = DocumentProcessor()
     
     # Initialize task manager
     _task_manager = TaskManager(
         redis_client=_redis_client,
         file_storage=_file_storage,
         mineru_client=mineru_client,
+        ai_client=ai_client,
+        document_processor=document_processor,
     )
     
     logger.info("Application started")
@@ -526,11 +563,11 @@ async def websocket_endpoint(websocket: WebSocket, task_id: str):
     finally:
         if receive_task is not None:
             receive_task.cancel()
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, WebSocketDisconnect):
                 await receive_task
         if pubsub_task is not None:
             pubsub_task.cancel()
-            with suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError, WebSocketDisconnect):
                 await pubsub_task
 
         with suppress(Exception):

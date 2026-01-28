@@ -3,9 +3,9 @@ Task Manager for the Research Report Processor.
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Optional
 
 from redis.asyncio import Redis
@@ -14,8 +14,8 @@ from fastapi import UploadFile
 from backend.models import (
     BatchResultResponse,
     FileInfo,
-    FileParseResult,
     MineruTaskState,
+    OutputFileType,
     ProgressUpdate,
     TaskStage,
     TaskStatus,
@@ -82,11 +82,13 @@ class TaskManager:
         mineru_client: Optional[Any] = None,
         file_storage: Optional[Any] = None,
         ai_client: Optional[Any] = None,
+        document_processor: Optional[Any] = None,
     ):
         self.redis_client = redis_client
         self.mineru_client = mineru_client
         self.file_storage = file_storage
         self.ai_client = ai_client
+        self.document_processor = document_processor
     
     def _get_task_key(self, task_id: str) -> str:
         return f"{TASK_KEY_PREFIX}{task_id}"
@@ -253,13 +255,188 @@ class TaskManager:
             await self.update_progress(task_id=task_id, stage=TaskStage.DOWNLOADING, progress=0, total=len(batch_result.extract_result), message="Downloading results")
             await self._download_results(task_id, batch_result)
             await self.update_progress(task_id=task_id, stage=TaskStage.DOWNLOADING, progress=len(batch_result.extract_result), total=len(batch_result.extract_result), message="Results downloaded")
-            await self.update_progress(task_id=task_id, stage=TaskStage.TRANSLATING, progress=0, total=100, message="Starting translation")
-            await self.update_progress(task_id=task_id, stage=TaskStage.TRANSLATING, progress=100, total=100, message="Translation complete")
-            await self.update_progress(task_id=task_id, stage=TaskStage.SUMMARIZING, progress=0, total=100, message="Starting summarization")
-            await self.update_progress(task_id=task_id, stage=TaskStage.SUMMARIZING, progress=100, total=100, message="Summarization complete")
-            await self.update_progress(task_id=task_id, stage=TaskStage.GENERATING, progress=0, total=100, message="Generating output files")
-            await self.update_progress(task_id=task_id, stage=TaskStage.GENERATING, progress=100, total=100, message="Output files generated")
-            await self.update_progress(task_id=task_id, stage=TaskStage.COMPLETED, progress=100, total=100, message="Processing complete")
+
+            if self.file_storage is None:
+                raise TaskManagerError(message="File storage not configured", task_id=task_id)
+
+            extracted_md_path = self.file_storage.get_extracted_markdown(task_id)
+            if extracted_md_path is None:
+                raise TaskManagerError(message="Extracted Markdown not found", task_id=task_id)
+
+            original_markdown = Path(extracted_md_path).read_text(
+                encoding="utf-8",
+                errors="replace",
+            )
+
+            extracted_docx_path = self.file_storage.get_extracted_docx(task_id)
+            extracted_docx_bytes: bytes | None = None
+            if extracted_docx_path is not None:
+                extracted_docx_bytes = Path(extracted_docx_path).read_bytes()
+
+            if self.ai_client is None:
+                raise TaskManagerError(message="AI client not configured", task_id=task_id)
+
+            source_lang = await self.ai_client.detect_language(original_markdown)
+
+            # Translation (chunk progress is reported via callback)
+            from backend.services.ai_client import split_into_chunks  # local import
+
+            total_chunks = max(1, len(split_into_chunks(original_markdown)))
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.TRANSLATING,
+                progress=0,
+                total=total_chunks,
+                message="Starting translation",
+            )
+
+            def translation_progress_callback(completed: int, total: int) -> None:
+                asyncio.create_task(
+                    self.update_progress(
+                        task_id=task_id,
+                        stage=TaskStage.TRANSLATING,
+                        progress=completed,
+                        total=total,
+                        message=f"Translating: {completed}/{total} chunks",
+                    )
+                )
+
+            bilingual_markdown = await self.ai_client.translate_document(
+                original_markdown,
+                source_lang,
+                progress_callback=translation_progress_callback,
+            )
+
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.TRANSLATING,
+                progress=total_chunks,
+                total=total_chunks,
+                message="Translation complete",
+            )
+
+            # Summarization
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.SUMMARIZING,
+                progress=0,
+                total=1,
+                message="Generating summary",
+            )
+            summary_markdown = await self.ai_client.summarize(original_markdown, source_lang)
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.SUMMARIZING,
+                progress=1,
+                total=1,
+                message="Summary complete",
+            )
+
+            if self.document_processor is None:
+                raise TaskManagerError(message="Document processor not configured", task_id=task_id)
+
+            # Generate and save output files
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=0,
+                total=5,
+                message="Generating output files",
+            )
+
+            output_basename = self._get_output_basename(task_id, task_status)
+            outputs: dict[str, str] = {}
+
+            original_md_filename = f"{output_basename}.md"
+            original_docx_filename = f"{output_basename}.docx"
+            bilingual_md_filename = f"{output_basename}_bilingual.md"
+            bilingual_docx_filename = f"{output_basename}_bilingual.docx"
+            summary_filename = f"{output_basename}_summary.md"
+
+            outputs[OutputFileType.ORIGINAL_MD.value] = self.file_storage.save_output(
+                task_id,
+                OutputFileType.ORIGINAL_MD.value,
+                original_md_filename,
+                original_markdown.encode("utf-8"),
+            )
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=1,
+                total=5,
+                message="Saved original Markdown",
+            )
+
+            if extracted_docx_bytes is None:
+                extracted_docx_bytes = await self.document_processor.markdown_to_docx(
+                    original_markdown
+                )
+
+            outputs[OutputFileType.ORIGINAL_DOCX.value] = self.file_storage.save_output(
+                task_id,
+                OutputFileType.ORIGINAL_DOCX.value,
+                original_docx_filename,
+                extracted_docx_bytes,
+            )
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=2,
+                total=5,
+                message="Saved original DOCX",
+            )
+
+            outputs[OutputFileType.BILINGUAL_MD.value] = self.file_storage.save_output(
+                task_id,
+                OutputFileType.BILINGUAL_MD.value,
+                bilingual_md_filename,
+                bilingual_markdown.encode("utf-8"),
+            )
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=3,
+                total=5,
+                message="Saved bilingual Markdown",
+            )
+
+            bilingual_docx_bytes = await self.document_processor.markdown_to_docx(bilingual_markdown)
+            outputs[OutputFileType.BILINGUAL_DOCX.value] = self.file_storage.save_output(
+                task_id,
+                OutputFileType.BILINGUAL_DOCX.value,
+                bilingual_docx_filename,
+                bilingual_docx_bytes,
+            )
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=4,
+                total=5,
+                message="Saved bilingual DOCX",
+            )
+
+            outputs[OutputFileType.SUMMARY.value] = self.file_storage.save_output(
+                task_id,
+                OutputFileType.SUMMARY.value,
+                summary_filename,
+                summary_markdown.encode("utf-8"),
+            )
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.GENERATING,
+                progress=5,
+                total=5,
+                message="Saved summary",
+            )
+
+            await self._update_task_outputs(task_id, outputs)
+            await self.update_progress(
+                task_id=task_id,
+                stage=TaskStage.COMPLETED,
+                progress=100,
+                total=100,
+                message="Processing complete",
+            )
             logger.info("Task %s: processing completed", task_id)
         except TaskManagerError:
             raise
@@ -268,6 +445,28 @@ class TaskManager:
             logger.exception("Task %s: processing failed: %s", task_id, error_msg)
             await self._broadcast_error(task_id, error_msg)
             raise TaskManagerError(message=f"Task processing failed: {error_msg}", task_id=task_id) from e
+
+    def _get_output_basename(self, task_id: str, task_status: TaskStatus) -> str:
+        if task_status.files:
+            name = (task_status.files[0].name or "").strip()
+            if name:
+                stem = Path(name).stem.strip()
+                if stem:
+                    return stem
+        return task_id
+
+    async def _update_task_outputs(self, task_id: str, outputs: dict[str, str]) -> None:
+        task_key = self._get_task_key(task_id)
+        try:
+            task_data = await self.redis_client.get(task_key)
+            if not task_data:
+                return
+            task_status = TaskStatus.model_validate_json(task_data)
+            task_status.outputs = outputs
+            task_status.updated_at = datetime.now()
+            await self.redis_client.set(task_key, task_status.model_dump_json())
+        except Exception as e:
+            logger.warning("Failed to update outputs for task %s: %s", task_id, e)
 
     async def _upload_files_to_mineru(self, task_id: str, task_status: TaskStatus) -> str:
         if self.mineru_client is None:
