@@ -3,10 +3,10 @@ Property-based tests for configuration validation.
 
 **Property 14: Environment Variable Validation**
 *For any* startup with missing required environment variables (MINERU_API_TOKEN,
-AI_API_ENDPOINT, AI_API_KEY), the application SHALL fail to start and SHALL
+STORAGE_PATH), the application SHALL fail to start and SHALL
 output an error message specifying which variable is missing.
 
-**Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+**Validates: Requirements 11.1, 11.4, 11.6**
 
 Uses Hypothesis for property-based testing with at least 100 iterations per test.
 """
@@ -26,11 +26,7 @@ from backend.config import (
 
 
 # Required environment variables that must be validated
-# Note: STORAGE_PATH is also required but not part of Property 14's scope
-REQUIRED_VARS = ["MINERU_API_TOKEN", "AI_API_ENDPOINT", "AI_API_KEY"]
-
-# All required variables including STORAGE_PATH
-ALL_REQUIRED_VARS = ["MINERU_API_TOKEN", "AI_API_ENDPOINT", "AI_API_KEY", "STORAGE_PATH"]
+REQUIRED_VARS = ["MINERU_API_TOKEN", "STORAGE_PATH"]
 
 
 # Strategy for generating non-empty valid string values for environment variables
@@ -57,7 +53,7 @@ class TestEnvironmentVariableValidationProperty:
     """
     Property-based tests for Property 14: Environment Variable Validation.
     
-    **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+    **Validates: Requirements 11.1, 11.4, 11.6**
     
     These tests verify that:
     1. Missing required variables cause startup failure
@@ -69,16 +65,12 @@ class TestEnvironmentVariableValidationProperty:
     @given(
         missing_vars=missing_vars_subset,
         mineru_token=valid_env_value,
-        ai_endpoint=valid_env_value,
-        ai_key=valid_env_value,
         storage_path=valid_env_value,
     )
     def test_missing_required_vars_causes_failure_with_specific_error(
         self,
         missing_vars: list[str],
         mineru_token: str,
-        ai_endpoint: str,
-        ai_key: str,
         storage_path: str,
     ):
         """
@@ -86,13 +78,11 @@ class TestEnvironmentVariableValidationProperty:
         SHALL fail to start and SHALL output an error message specifying
         which variables are missing.
         
-        **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+        **Validates: Requirements 11.1, 11.4, 11.6**
         """
         # Build environment with all variables present
         all_vars = {
             "MINERU_API_TOKEN": mineru_token,
-            "AI_API_ENDPOINT": ai_endpoint,
-            "AI_API_KEY": ai_key,
             "STORAGE_PATH": storage_path,
         }
         
@@ -120,27 +110,21 @@ class TestEnvironmentVariableValidationProperty:
     @settings(max_examples=100)
     @given(
         mineru_token=valid_env_value,
-        ai_endpoint=valid_env_value,
-        ai_key=valid_env_value,
         storage_path=valid_env_value,
     )
     def test_all_required_vars_present_allows_startup(
         self,
         mineru_token: str,
-        ai_endpoint: str,
-        ai_key: str,
         storage_path: str,
     ):
         """
         Property: When all required variables are present with any valid
         string values, the system SHALL start successfully.
         
-        **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+        **Validates: Requirements 11.1, 11.4, 11.6**
         """
         env_vars = {
             "MINERU_API_TOKEN": mineru_token,
-            "AI_API_ENDPOINT": ai_endpoint,
-            "AI_API_KEY": ai_key,
             "STORAGE_PATH": storage_path,
         }
         
@@ -150,9 +134,9 @@ class TestEnvironmentVariableValidationProperty:
             
             # Verify all values are correctly loaded
             assert settings.MINERU_API_TOKEN == mineru_token
-            assert settings.AI_API_ENDPOINT == ai_endpoint
-            assert settings.AI_API_KEY == ai_key
             assert settings.STORAGE_PATH == storage_path
+            assert settings.AI_API_ENDPOINT is None
+            assert settings.AI_API_KEY is None
 
     @settings(max_examples=100)
     @given(
@@ -163,35 +147,28 @@ class TestEnvironmentVariableValidationProperty:
             unique=True,
         ),
         mineru_token=valid_env_value,
-        ai_endpoint=valid_env_value,
-        ai_key=valid_env_value,
         storage_path=valid_env_value,
     )
     def test_partial_required_vars_causes_failure(
         self,
         present_vars: list[str],
         mineru_token: str,
-        ai_endpoint: str,
-        ai_key: str,
         storage_path: str,
     ):
         """
         Property: For any proper subset of required variables (not all present),
         the system SHALL fail to start.
         
-        **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+        **Validates: Requirements 11.1, 11.4, 11.6**
         """
         # Build environment with only the present variables
         all_vars = {
             "MINERU_API_TOKEN": mineru_token,
-            "AI_API_ENDPOINT": ai_endpoint,
-            "AI_API_KEY": ai_key,
             "STORAGE_PATH": storage_path,
         }
         
-        # Only include variables that are in present_vars, plus STORAGE_PATH
-        # (STORAGE_PATH is always included since it's required but not in REQUIRED_VARS scope)
-        env_vars = {"STORAGE_PATH": storage_path}
+        # Only include variables that are in present_vars
+        env_vars: dict[str, str] = {}
         for var in present_vars:
             env_vars[var] = all_vars[var]
         
@@ -219,16 +196,12 @@ class TestEnvironmentVariableValidationProperty:
     @given(
         missing_var=st.sampled_from(REQUIRED_VARS),
         mineru_token=valid_env_value,
-        ai_endpoint=valid_env_value,
-        ai_key=valid_env_value,
         storage_path=valid_env_value,
     )
     def test_single_missing_var_error_message_is_descriptive(
         self,
         missing_var: str,
         mineru_token: str,
-        ai_endpoint: str,
-        ai_key: str,
         storage_path: str,
     ):
         """
@@ -239,8 +212,6 @@ class TestEnvironmentVariableValidationProperty:
         """
         all_vars = {
             "MINERU_API_TOKEN": mineru_token,
-            "AI_API_ENDPOINT": ai_endpoint,
-            "AI_API_KEY": ai_key,
             "STORAGE_PATH": storage_path,
         }
         
@@ -270,7 +241,7 @@ class TestEnvironmentVariableValidationExhaustive:
     """
     Exhaustive tests for all combinations of missing required variables.
     
-    **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+    **Validates: Requirements 11.1, 11.4, 11.6**
     
     These tests complement the property-based tests by ensuring all
     possible combinations are covered.
@@ -281,26 +252,19 @@ class TestEnvironmentVariableValidationExhaustive:
         [
             # Single missing variable
             ["MINERU_API_TOKEN"],
-            ["AI_API_ENDPOINT"],
-            ["AI_API_KEY"],
-            # Two missing variables
-            ["MINERU_API_TOKEN", "AI_API_ENDPOINT"],
-            ["MINERU_API_TOKEN", "AI_API_KEY"],
-            ["AI_API_ENDPOINT", "AI_API_KEY"],
-            # All three missing
-            ["MINERU_API_TOKEN", "AI_API_ENDPOINT", "AI_API_KEY"],
+            ["STORAGE_PATH"],
+            # Both missing
+            ["MINERU_API_TOKEN", "STORAGE_PATH"],
         ],
     )
     def test_all_missing_combinations_report_correct_vars(self, missing_vars: list[str]):
         """
         Test that all combinations of missing variables are correctly reported.
         
-        **Validates: Requirements 11.1, 11.2, 11.3, 11.6**
+        **Validates: Requirements 11.1, 11.4, 11.6**
         """
         all_vars = {
             "MINERU_API_TOKEN": "test_token",
-            "AI_API_ENDPOINT": "https://api.example.com",
-            "AI_API_KEY": "test_key",
             "STORAGE_PATH": "/tmp/storage",
         }
         
@@ -318,6 +282,6 @@ class TestEnvironmentVariableValidationExhaustive:
                 assert var in error.message
             
             # No extra variables should be reported as missing
-            for var in ["MINERU_API_TOKEN", "AI_API_ENDPOINT", "AI_API_KEY"]:
+            for var in ["MINERU_API_TOKEN", "STORAGE_PATH"]:
                 if var not in missing_vars:
                     assert var not in error.missing_vars

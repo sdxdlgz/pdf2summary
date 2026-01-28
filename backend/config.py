@@ -6,8 +6,6 @@ that all required variables are present at startup.
 
 Requirements:
 - 11.1: Read MinerU API token from MINERU_API_TOKEN
-- 11.2: Read AI service endpoint from AI_API_ENDPOINT
-- 11.3: Read AI service API key from AI_API_KEY
 - 11.4: Read file storage path from STORAGE_PATH
 - 11.5: Read server port from SERVER_PORT with default 8765
 - 11.6: Fail to start with descriptive error if required variable is missing
@@ -26,16 +24,12 @@ class Settings(BaseSettings):
     
     Required variables (no defaults - must be set):
     - MINERU_API_TOKEN: MinerU API authentication token
-    - AI_API_ENDPOINT: OpenAI-compatible API endpoint URL
-    - AI_API_KEY: API key for AI service
     - STORAGE_PATH: Path for file storage
     
     Optional variables (have defaults):
     - SERVER_PORT: HTTP server port (default: 8765)
     - REDIS_URL: Redis connection URL
     - LOG_LEVEL: Logging level
-    - AI_MODEL: AI model name
-    - AI_MAX_CONCURRENCY: Max concurrent AI requests
     - DOWNLOAD_LINK_EXPIRY: Download link expiration in seconds
     """
     
@@ -46,26 +40,28 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
-    # Required environment variables (Requirement 11.1, 11.2, 11.3, 11.4)
+    # Required environment variables (Requirement 11.1, 11.4)
     # These have no defaults and will cause validation errors if missing
     MINERU_API_TOKEN: str = Field(
         ...,
         description="MinerU API authentication token",
         min_length=1,
     )
-    AI_API_ENDPOINT: str = Field(
-        ...,
-        description="OpenAI-compatible API endpoint URL",
-        min_length=1,
-    )
-    AI_API_KEY: str = Field(
-        ...,
-        description="API key for AI service",
-        min_length=1,
-    )
     STORAGE_PATH: str = Field(
         ...,
         description="Path for file storage",
+        min_length=1,
+    )
+
+    # Optional AI configuration (not required when only exporting MinerU outputs)
+    AI_API_ENDPOINT: Optional[str] = Field(
+        default=None,
+        description="OpenAI-compatible API endpoint URL",
+        min_length=1,
+    )
+    AI_API_KEY: Optional[str] = Field(
+        default=None,
+        description="API key for AI service",
         min_length=1,
     )
     
@@ -88,11 +84,11 @@ class Settings(BaseSettings):
     )
     AI_MODEL: str = Field(
         default="gpt-5-nano",
-        description="AI model name for translation and summarization",
+        description="AI model name (optional; only used when AI features are enabled)",
     )
     AI_MAX_CONCURRENCY: int = Field(
         default=10,
-        description="Maximum concurrent AI requests",
+        description="Maximum concurrent AI requests (optional; only used when AI features are enabled)",
         ge=1,
         le=100,
     )

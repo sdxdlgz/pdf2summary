@@ -7,7 +7,7 @@ interface DownloadPanelProps {
 }
 
 // Output file types matching backend OutputFileType enum
-type OutputFileType = 'original_md' | 'original_docx' | 'bilingual_md' | 'bilingual_docx' | 'summary';
+type OutputFileType = 'original_md' | 'original_docx';
 
 interface FileTypeInfo {
   type: OutputFileType;
@@ -20,9 +20,6 @@ interface FileTypeInfo {
 const FILE_TYPES: FileTypeInfo[] = [
   { type: 'original_md', label: '原文 Markdown', icon: '📄', extension: '.md' },
   { type: 'original_docx', label: '原文 DOCX', icon: '📝', extension: '.docx' },
-  { type: 'bilingual_md', label: '双语对照 Markdown', icon: '🔄', extension: '.md' },
-  { type: 'bilingual_docx', label: '双语对照 DOCX', icon: '📋', extension: '.docx' },
-  { type: 'summary', label: '双语总结', icon: '📊', extension: '.md' },
 ];
 
 // Track download state for each file type
@@ -39,9 +36,6 @@ export const DownloadPanel: React.FC<DownloadPanelProps> = ({
   const [downloadStates, setDownloadStates] = useState<Record<OutputFileType, DownloadState>>({
     original_md: { isDownloading: false, error: null },
     original_docx: { isDownloading: false, error: null },
-    bilingual_md: { isDownloading: false, error: null },
-    bilingual_docx: { isDownloading: false, error: null },
-    summary: { isDownloading: false, error: null },
   });
 
   // Update download state for a specific file type

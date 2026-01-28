@@ -131,8 +131,6 @@ class TestGetSettings:
         """Test get_settings returns Settings when all required vars are set."""
         env_vars = {
             "MINERU_API_TOKEN": "test_token",
-            "AI_API_ENDPOINT": "https://api.example.com",
-            "AI_API_KEY": "test_key",
             "STORAGE_PATH": "/tmp/storage",
         }
         
@@ -156,42 +154,22 @@ class TestGetSettings:
             assert "MINERU_API_TOKEN" in exc_info.value.message
             assert "MINERU_API_TOKEN" in exc_info.value.missing_vars
     
-    def test_get_settings_missing_ai_endpoint(self):
-        """Test that missing AI_API_ENDPOINT raises ConfigurationError (Req 11.2, 11.6)."""
+    def test_get_settings_missing_ai_config_is_allowed(self):
+        """Test that AI_API_* are optional when only exporting MinerU outputs."""
         env_vars = {
             "MINERU_API_TOKEN": "test_token",
-            "AI_API_KEY": "test_key",
             "STORAGE_PATH": "/tmp/storage",
         }
-        
+
         with patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ConfigurationError) as exc_info:
-                get_settings()
-            
-            assert "AI_API_ENDPOINT" in exc_info.value.message
-            assert "AI_API_ENDPOINT" in exc_info.value.missing_vars
-    
-    def test_get_settings_missing_ai_key(self):
-        """Test that missing AI_API_KEY raises ConfigurationError (Req 11.3, 11.6)."""
-        env_vars = {
-            "MINERU_API_TOKEN": "test_token",
-            "AI_API_ENDPOINT": "https://api.example.com",
-            "STORAGE_PATH": "/tmp/storage",
-        }
-        
-        with patch.dict(os.environ, env_vars, clear=True):
-            with pytest.raises(ConfigurationError) as exc_info:
-                get_settings()
-            
-            assert "AI_API_KEY" in exc_info.value.message
-            assert "AI_API_KEY" in exc_info.value.missing_vars
+            settings = get_settings()
+            assert settings.AI_API_ENDPOINT is None
+            assert settings.AI_API_KEY is None
     
     def test_get_settings_missing_storage_path(self):
         """Test that missing STORAGE_PATH raises ConfigurationError (Req 11.4, 11.6)."""
         env_vars = {
             "MINERU_API_TOKEN": "test_token",
-            "AI_API_ENDPOINT": "https://api.example.com",
-            "AI_API_KEY": "test_key",
         }
         
         with patch.dict(os.environ, env_vars, clear=True):
@@ -211,17 +189,12 @@ class TestGetSettings:
             
             error = exc_info.value
             assert "MINERU_API_TOKEN" in error.missing_vars
-            assert "AI_API_ENDPOINT" in error.missing_vars
-            assert "AI_API_KEY" in error.missing_vars
             assert "STORAGE_PATH" in error.missing_vars
-            assert len(error.missing_vars) == 4
+            assert len(error.missing_vars) == 2
     
     def test_get_settings_descriptive_error_message(self):
         """Test that error message is descriptive (Req 11.6)."""
-        env_vars = {
-            "AI_API_ENDPOINT": "https://api.example.com",
-            "AI_API_KEY": "test_key",
-        }
+        env_vars = {}
         
         with patch.dict(os.environ, env_vars, clear=True):
             with pytest.raises(ConfigurationError) as exc_info:

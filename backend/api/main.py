@@ -39,8 +39,6 @@ from redis.asyncio import Redis
 
 from backend.config import Settings, get_cached_settings
 from backend.models import OutputFileType, TaskStatus
-from backend.services.ai_client import AIClient
-from backend.services.document_processor import DocumentProcessor
 from backend.services.file_storage import FileStorage
 from backend.services.file_validator import validate_batch, ValidationResult
 from backend.services.task_manager import PROGRESS_CHANNEL_PREFIX, TASK_KEY_PREFIX, TaskManager
@@ -123,22 +121,11 @@ async def lifespan(app: FastAPI):
     # Initialize MinerU client
     mineru_client = MineruClient(api_token=settings.MINERU_API_TOKEN)
 
-    # Initialize AI + document processor
-    ai_client = AIClient(
-        endpoint=settings.AI_API_ENDPOINT,
-        api_key=settings.AI_API_KEY,
-        model=settings.AI_MODEL,
-        max_concurrency=settings.AI_MAX_CONCURRENCY,
-    )
-    document_processor = DocumentProcessor()
-    
     # Initialize task manager
     _task_manager = TaskManager(
         redis_client=_redis_client,
         file_storage=_file_storage,
         mineru_client=mineru_client,
-        ai_client=ai_client,
-        document_processor=document_processor,
     )
     
     logger.info("Application started")
