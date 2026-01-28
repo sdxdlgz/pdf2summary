@@ -1,0 +1,110 @@
+# Docker Compose configuration for Research Report Processor
+# Compatible with Docker Compose V2+
+#
+# Usage:
+#   1. Copy .env.example to .env and configure values
+#   2. Run: docker-compose up -d
+#   3. Access: http://localhost:3000
+#
+# Requirements: 10.2, 10.3, 10.4, 10.5, 10.6
+
+services:
+  # ==========================================================================
+  # Redis Service - Task queue and state storage
+  # ==========================================================================
+  redis:
+    image: redis:alpine
+    container_name: research-report-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    # Redis is internal only - no port exposed to host
+
+  # ==========================================================================
+  # Backend Service - FastAPI application
+  # ==========================================================================
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: research-report-backend
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      # Required environment variables (Requirement 10.3)
+      - MINERU_API_TOKEN=${MINERU_API_TOKEN}
+      - AI_API_ENDPOINT=${AI_API_ENDPOINT}
+      - AI_API_KEY=${AI_API_KEY}
+      - STORAGE_PATH=/app/storage
+      - SERVER_PORT=8765
+      - REDIS_URL=redis://redis:6379/0
+      # Optional environment variables
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - AI_MODEL=${AI_MODEL:-gpt-5-nano}
+      - AI_MAX_CONCURRENCY=${AI_MAX_CONCURRENCY:-10}
+      - DOWNLOAD_LINK_EXPIRY=${DOWNLOAD_LINK_EXPIRY:-86400}
+    volumes:
+      # Persistent storage for uploaded files and outputs (Requirement 10.5)
+      - storage_data:/app/storage
+    networks:
+      - app-network
+    healthcheck:
+      # Health check endpoint (Requirement 10.6)
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Backend is internal only - accessed via frontend proxy
+
+  # ==========================================================================
+  # Frontend Service - React application served by nginx
+  # ==========================================================================
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    container_name: research-report-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # Expose to host (Requirement 10.4)
+      - "${FRONTEND_PORT:-8765}:80"
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  app-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes - Persistent storage
+# =============================================================================
+volumes:
+  # Redis data persistence
+  redis_data:
+    driver: local
+  # Application storage for uploads and outputs (Requirement 10.5)
+  storage_data:
+    driver: local
