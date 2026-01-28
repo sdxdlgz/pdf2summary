@@ -272,11 +272,26 @@ class AIClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    @staticmethod
+    def _is_temperature_unsupported_error(message: str) -> bool:
+        """
+        Detect provider errors indicating the `temperature` parameter is unsupported.
+
+        Some OpenAI-compatible providers/models reject non-default temperatures and expect
+        callers to omit the field (or use the default value).
+        """
+        lowered = message.lower()
+        return (
+            "temperature" in lowered
+            and "unsupported" in lowered
+            and ("only the default" in lowered or "default (1)" in lowered)
+        )
     
     async def _call_api(
         self,
         messages: list[dict[str, str]],
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
     ) -> str:
         """
         Make a single API call to the OpenAI-compatible endpoint.
@@ -296,8 +311,10 @@ class AIClient:
         payload = {
             "model": self.model,
             "messages": messages,
-            "temperature": temperature,
         }
+
+        if temperature is not None:
+            payload["temperature"] = temperature
         
         async with self._semaphore:
             try:
@@ -372,7 +389,7 @@ class AIClient:
     async def _call_api_with_retry(
         self,
         messages: list[dict[str, str]],
-        temperature: float = 0.3,
+        temperature: float | None = 0.3,
     ) -> str:
         """
         Make an API call with retry logic.
@@ -392,6 +409,7 @@ class AIClient:
         Validates: Requirements 5.7, 6.5 - Retry up to 3 times
         """
         last_error: Optional[AIClientError] = None
+        tried_without_temperature = False
         
         for attempt in range(MAX_RETRIES + 1):  # 1 initial + 3 retries = 4 total
             try:
@@ -399,6 +417,19 @@ class AIClient:
             
             except AIClientError as e:
                 last_error = e
+
+                if (
+                    not tried_without_temperature
+                    and temperature is not None
+                    and self._is_temperature_unsupported_error(e.message)
+                ):
+                    logger.info(
+                        "Provider rejected temperature=%.3f; retrying once without temperature",
+                        temperature,
+                    )
+                    temperature = None
+                    tried_without_temperature = True
+                    continue
 
                 if not e.retryable:
                     logger.error("Non-retryable AI API error: %s", e.message)

@@ -13,6 +13,7 @@ Tests cover:
 
 import pytest
 from aioresponses import aioresponses
+from yarl import URL
 
 from backend.services.ai_client import (
     AIClient,
@@ -408,6 +409,43 @@ class TestAIClientTranslateChunk:
             )
             
             assert result == "成功"
+
+
+    @pytest.mark.asyncio
+    async def test_translate_chunk_retries_without_temperature_when_unsupported(self, client):
+        """Retry once without temperature when provider rejects non-default temperature."""
+        url = "https://api.example.com/chat/completions"
+        unsupported_body = (
+            "Unsupported value: 'temperature' does not support 0.3 with this model. "
+            "Only the default (1) value is supported."
+        )
+
+        with aioresponses() as m:
+            m.post(url, status=400, body=unsupported_body)
+            m.post(
+                url,
+                payload={
+                    "choices": [
+                        {"message": {"content": "ok"}},
+                    ],
+                },
+            )
+
+            result = await client.translate_chunk(
+                text="Test",
+                source_lang="en",
+            )
+
+            assert result == "ok"
+
+            calls = m.requests[("POST", URL(url))]
+            assert len(calls) == 2
+
+            first_payload = calls[0].kwargs.get("json") or {}
+            second_payload = calls[1].kwargs.get("json") or {}
+
+            assert first_payload.get("temperature") == 0.3
+            assert "temperature" not in second_payload
 
 
 class TestAIClientTranslateDocument:
