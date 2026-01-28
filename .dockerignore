@@ -68,8 +68,8 @@ docker-compose*.yml
 .docker/
 
 # Documentation
-*.md
 docs/
+!README.md
 
 # Kiro specs
 .kiro/
